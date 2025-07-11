@@ -1,4 +1,4 @@
-""Tests for the main module."""
+"""Tests for the main module."""
 import logging
 import sys
 from pathlib import Path
@@ -10,7 +10,7 @@ from src import main
 
 
 def test_parse_args():
-    ""Test argument parsing."""
+    """Test argument parsing."""
     # Test with no arguments should fail (source is required)
     with pytest.raises(SystemExit):
         main.parse_args([])
@@ -22,15 +22,13 @@ def test_parse_args():
     assert args.verbose == 0
 
     # Test with all arguments
-    args = main.parse_args(
-        ["-v", "-o", "test_output", "source_file.py"]
-    )
+    args = main.parse_args(["-v", "-o", "test_output", "source_file.py"])
     assert args.verbose == 1
     assert args.output == Path("test_output")
 
 
 def test_setup_logging():
-    ""Test logging setup."""
+    """Test logging setup."""
     # Test with different verbosity levels
     for verbosity, expected_level in [
         (0, logging.WARNING),
@@ -45,7 +43,7 @@ def test_setup_logging():
 
 
 class TestMain:
-    ""Test the main function."""
+    """Test the main function."""
 
     @patch("src.main.parse_args")
     @patch("src.main.setup_logging")
@@ -59,7 +57,7 @@ class TestMain:
         mock_parse_args,
         caplog,
     ):
-        ""Test successful execution of main."""
+        """Test successful execution of main."""
         # Setup mocks
         mock_args = MagicMock()
         mock_args.source = Path("source.py")
@@ -80,7 +78,7 @@ class TestMain:
 
     @patch("src.main.parse_args")
     def test_main_source_not_found(self, mock_parse_args, caplog):
-        ""Test main when source file doesn't exist."""
+        """Test main when source file doesn't exist."""
         # Setup mocks
         mock_args = MagicMock()
         mock_args.source = Path("nonexistent.py")
@@ -98,7 +96,7 @@ class TestMain:
 
     @patch("src.main.parse_args")
     def test_main_exception(self, mock_parse_args, caplog):
-        ""Test main when an exception occurs."""
+        """Test main when an exception occurs."""
         # Setup mocks to raise an exception
         mock_parse_args.side_effect = Exception("Test error")
 

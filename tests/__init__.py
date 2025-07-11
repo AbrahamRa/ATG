@@ -1,3 +1,3 @@
-""Test package for ATG - Automated Test Generator."""
+"""Test package for ATG - Automated Test Generator."""
 
 __all__ = []

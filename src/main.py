@@ -1,4 +1,4 @@
-""ATG - Main module.
+"""ATG - Main module.
 
 This module contains the main entry point for the ATG (Automated Test Generator) tool.
 """
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(args: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    ""Parse command line arguments.
+    """Parse command line arguments.
 
     Args:
         args: Command line arguments. If None, uses sys.argv[1:].
@@ -55,7 +55,7 @@ def parse_args(args: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def setup_logging(verbosity: int = 0) -> None:
-    ""Set up logging configuration.
+    """Set up logging configuration.
 
     Args:
         verbosity: Verbosity level (0=WARNING, 1=INFO, 2=DEBUG)
@@ -81,23 +81,23 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         parsed_args = parse_args(args)
         setup_logging(parsed_args.verbose)
         logger.info("Starting ATG")
-        
+
         # Ensure source exists
         if not parsed_args.source.exists():
             logger.error(f"Source not found: {parsed_args.source}")
             return 1
-            
+
         # Create output directory if it doesn't exist
         parsed_args.output.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Processing: {parsed_args.source}")
         logger.info(f"Output directory: {parsed_args.output.absolute()}")
-        
+
         # TODO: Add test generation logic here
         logger.info("Test generation not yet implemented")
-        
+
         return 0
-        
+
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
         return 1

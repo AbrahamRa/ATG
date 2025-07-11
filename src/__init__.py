@@ -4,7 +4,7 @@ This package provides tools for automatically generating test cases for Python c
 """
 
 __version__ = "0.1.0"
-__author__ = "Your Name <your.email@example.com>"
+__author__ = "AbrahamRa <gramos112@gmail.com>"
 __all__ = ["main"]
 
 from .main import main
