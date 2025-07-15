@@ -1,0 +1,48 @@
+package {{ package_name|default("com.example.tests") }};
+
+import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * {{ test_name }}
+ *
+ * {{ description }}
+ */
+@DisplayName("{{ test_name }}")
+public class {{ test_name|replace(' ', '') }}Test {
+
+    @BeforeEach
+    public void setUp() {
+        // Setup code here
+    }
+
+    @AfterEach
+    public void tearDown() {
+        // Teardown code here
+    }
+
+    {% for test_method in test_methods %}
+    @Test
+    @DisplayName("{{ test_method.name }}")
+    public void {{ test_method.name|lower|replace(' ', '_') }}() {
+        // Given
+        {% if test_method.given %}{{ test_method.given }}{% else %}// Setup test data and state{% endif %}
+
+        // When
+        {% if test_method.when %}{{ test_method.when }}{% else %}// Perform the action being tested{% endif %}
+
+        // Then
+        {% if test_method.then %}{{ test_method.then }}{% else %}// Assert the expected results{% endif %}
+    }
+
+    {% endfor %}
+
+    // Helper methods can be added here
+
+    /**
+     * Example helper method
+     */
+    private void exampleHelper() {
+        // Implementation here
+    }
+}

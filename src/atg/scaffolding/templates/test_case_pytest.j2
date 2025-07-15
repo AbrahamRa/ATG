@@ -1,0 +1,835 @@
+"""{{ test_name }}
+
+{{ description }}
+
+This test module includes advanced pytest features like:
+- Test parameterization
+- Custom fixtures
+- Parallel test execution
+- Advanced reporting
+- Performance monitoring
+"""
+import os
+import sys
+import time
+import json
+import logging
+import inspect
+import platform
+import subprocess
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Tuple, Generator, Callable
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from enum import Enum, auto
+
+# Third-party imports
+import pytest
+import allure
+import requests
+from pydantic import BaseModel, Field
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    TimeoutException,
+    WebDriverException,
+    StaleElementReferenceException
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('test_execution.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Custom types
+EnvName = str
+BrowserName = str
+TestStatus = str
+
+class TestEnvironment(str, Enum):
+    LOCAL = "local"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+class BrowserType(str, Enum):
+    CHROME = "chrome"
+    FIREFOX = "firefox"
+    EDGE = "edge"
+    SAFARI = "safari"
+
+class TestResult(BaseModel):
+    """Test result data model."""
+    test_name: str
+    status: str
+    duration: float
+    start_time: str
+    end_time: str
+    error: Optional[str] = None
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+# Test configuration
+class TestConfig(BaseModel):
+    """Test configuration settings with validation."""
+    env: TestEnvironment = Field(
+        default=TestEnvironment(os.getenv('TEST_ENV', 'staging')),
+        description="Test environment (local, staging, production)"
+    )
+    browser: BrowserType = Field(
+        default=BrowserType(os.getenv('BROWSER', 'chrome')),
+        description="Browser to run tests on"
+    )
+    headless: bool = Field(
+        default=os.getenv('HEADLESS', 'true').lower() == 'true',
+        description="Run browser in headless mode"
+    )
+    timeout: int = Field(
+        default=int(os.getenv('TIMEOUT', '30')),
+        description="Default wait timeout in seconds"
+    )
+    base_url: str = Field(
+        default=os.getenv('BASE_URL'),
+        description="Base URL of the application under test"
+    )
+    api_url: str = Field(
+        default=os.getenv('API_URL'),
+        description="Base URL for API requests"
+    )
+    parallel: bool = Field(
+        default=os.getenv('PARALLEL', 'false').lower() == 'true',
+        description="Enable parallel test execution"
+    )
+    max_retries: int = Field(
+        default=int(os.getenv('MAX_RETRIES', '3')),
+        description="Maximum number of retries for flaky tests"
+    )
+
+    class Config:
+        use_enum_values = True
+
+    def __init__(self, **data):
+        """Initialize with environment overrides."""
+        super().__init__(**data)
+        if not self.base_url:
+            self.base_url = self._get_default_url()
+        if not self.api_url:
+            self.api_url = f"{self.base_url}/api/v1"
+
+    def _get_default_url(self) -> str:
+        """Get default URL based on environment."""
+        urls = {
+            TestEnvironment.LOCAL: "http://localhost:3000",
+            TestEnvironment.STAGING: "https://staging.example.com",
+            TestEnvironment.PRODUCTION: "https://example.com"
+        }
+        return urls.get(self.env, "http://localhost:3000")
+
+
+@dataclass
+class TestStep:
+    """Represents a single test step with action and expected result."""
+    action: str
+    expected_result: str
+    keyword: str = ""
+    status: str = "not_run"
+    error: Optional[str] = None
+
+
+class BaseTest:
+    """
+    Base test class with advanced functionality.
+
+    This class provides common test functionality including:
+    - WebDriver interactions
+    - Element location strategies
+    - Test data management
+    - Logging and reporting
+    - Performance monitoring
+    """
+
+    def __init__(self, browser: WebDriver, config: TestConfig):
+        """
+        Initialize the test case with WebDriver and configuration.
+
+        Args:
+            browser: WebDriver instance
+            config: Test configuration
+        """
+        self.browser = browser
+        self.config = config
+        self.wait = WebDriverWait(browser, config.timeout)
+        self.steps: List[Dict[str, Any]] = []
+        self.test_name: str = ""
+        self.status: str = "not_run"
+        self.start_time: datetime = None
+        self.end_time: datetime = None
+        self.duration: float = 0.0
+        self.error: Optional[str] = None
+        self.metadata: Dict[str, Any] = {
+            "browser": config.browser,
+            "environment": config.env,
+            "os": platform.system(),
+            "python_version": platform.python_version()
+        }
+
+    # --- Navigation ---
+    def navigate_to(self, url: str, wait_for_load: bool = True):
+        """
+        Navigate to a URL.
+
+        Args:
+            url: URL to navigate to (can be relative or absolute)
+            wait_for_load: Whether to wait for page load
+        """
+        full_url = url if url.startswith(('http://', 'https://')) else f"{self.config.base_url.rstrip('/')}/{url.lstrip('/')}"
+        logger.info(f"Navigating to: {full_url}")
+
+        with allure.step(f"Navigate to {full_url}"):
+            self.browser.get(full_url)
+
+            if wait_for_load:
+                self.wait_for_page_load()
+
+    # --- Element Interactions ---
+    def wait_for_element(
+        self,
+        by: By,
+        value: str,
+        timeout: Optional[int] = None,
+        visible: bool = True,
+        clickable: bool = False
+    ) -> WebElement:
+        """
+        Wait for an element to be present and optionally visible/clickable.
+
+        Args:
+            by: Locator strategy (By.ID, By.CSS_SELECTOR, etc.)
+            value: Locator value
+            timeout: Maximum time to wait (seconds)
+            visible: Wait for element to be visible
+            clickable: Wait for element to be clickable
+
+        Returns:
+            WebElement: The located element
+        """
+        timeout = timeout or self.config.timeout
+        wait = WebDriverWait(self.browser, timeout)
+
+        try:
+            if clickable:
+                return wait.until(EC.element_to_be_clickable((by, value)))
+            elif visible:
+                return wait.until(EC.visibility_of_element_located((by, value)))
+            else:
+                return wait.until(EC.presence_of_element_located((by, value)))
+        except TimeoutException as e:
+            logger.error(f"Element not found: {by}={value}")
+            raise
+
+    # --- Screenshots ---
+    def take_screenshot(self, name: str = None) -> str:
+        """
+        Take a screenshot and save it to the screenshots directory.
+
+        Args:
+            name: Name of the screenshot file
+
+        Returns:
+            str: Path to the saved screenshot
+        """
+        screenshots_dir = Path("screenshots")
+        screenshots_dir.mkdir(exist_ok=True)
+
+        if not name:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            name = f"{self.test_name}_{timestamp}.png"
+
+        # Clean up the filename
+        name = "".join(c if c.isalnum() or c in ('_', '-', '.') else '_' for c in name)
+        filepath = screenshots_dir / name
+
+        try:
+            self.browser.save_screenshot(str(filepath))
+            logger.info(f"Screenshot saved to: {filepath}")
+
+            # Attach to Allure report
+            allure.attach(
+                self.browser.get_screenshot_as_png(),
+                name=name,
+                attachment_type=allure.attachment_type.PNG
+            )
+
+            return str(filepath)
+        except Exception as e:
+            logger.error(f"Failed to take screenshot: {e}")
+            return ""
+
+    # --- Test Data ---
+    def load_test_data(self, file_path: str) -> Dict[str, Any]:
+        """
+        Load test data from a JSON or YAML file.
+
+        Args:
+            file_path: Path to the test data file
+
+        Returns:
+            Dict with test data
+        """
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Test data file not found: {file_path}")
+
+        if path.suffix.lower() == '.json':
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        elif path.suffix.lower() in ('.yaml', '.yml'):
+            import yaml
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        else:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+
+    # --- Performance ---
+    def measure_performance(self, metric: str, action: Callable, *args, **kwargs) -> Dict[str, Any]:
+        """
+        Measure performance of an action.
+
+        Args:
+            metric: Name of the metric being measured
+            action: Callable to measure
+            *args: Positional arguments for the action
+            **kwargs: Keyword arguments for the action
+
+        Returns:
+            Dict with performance metrics
+        """
+        start_time = time.perf_counter()
+        start_mem = self._get_memory_usage()
+
+        try:
+            result = action(*args, **kwargs)
+            status = "success"
+        except Exception as e:
+            result = None
+            status = "error"
+            raise
+        finally:
+            end_time = time.perf_counter()
+            end_mem = self._get_memory_usage()
+
+            metrics = {
+                f"{metric}_time": end_time - start_time,
+                f"{metric}_memory": end_mem - start_mem,
+                f"{metric}_status": status,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+            # Log metrics
+            self.metadata.setdefault("performance", []).append(metrics)
+
+            if status == "success":
+                logger.info(f"Performance - {metric}: {metrics[f'{metric}_time']:.4f}s")
+
+            return metrics
+
+    def _get_memory_usage(self) -> int:
+        """Get current memory usage in bytes."""
+        import psutil
+        return psutil.Process().memory_info().rss
+
+    # --- Reporting ---
+    def log_step(self, message: str, status: str = "info", **kwargs):
+        """
+        Log a test step with metadata.
+
+        Args:
+            message: Step description
+            status: Step status (info, pass, fail, etc.)
+            **kwargs: Additional metadata
+        """
+        step = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": message,
+            "status": status,
+            **kwargs
+        }
+
+        self.steps.append(step)
+
+        # Log to console and file
+        log_message = f"[{status.upper()}] {message}"
+        if status.lower() == "fail":
+            logger.error(log_message)
+        else:
+            logger.info(log_message)
+
+        # Add to Allure report
+        with allure.step(message):
+            if kwargs:
+                allure.attach(
+                    json.dumps(kwargs, indent=2),
+                    name="Step Details",
+                    attachment_type=allure.attachment_type.JSON
+                )
+
+    def log_test_result(self):
+        """Log the test result to a file."""
+        result = {
+            "test_name": self.test_name,
+            "status": self.status,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "duration": self.duration,
+            "error": self.error,
+            "steps": self.steps,
+            "metadata": self.metadata
+        }
+
+        # Create results directory if it doesn't exist
+        results_dir = Path("test_results")
+        results_dir.mkdir(exist_ok=True)
+
+        # Save result to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_file = results_dir / f"{self.test_name}_{timestamp}.json"
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, default=str)
+
+        logger.info(f"Test result saved to: {result_file}")
+
+        return result_file
+
+
+# --- Pytest Configuration ---
+def pytest_configure(config):
+    """Configure pytest with custom settings."""
+    # Add custom markers
+    config.addinivalue_line(
+        "markers",
+        "smoke: mark test as smoke test"
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: mark test as integration test"
+    )
+    config.addinivalue_line(
+        "markers",
+        "performance: mark test as performance test"
+    )
+
+# --- Fixtures ---
+@pytest.fixture(scope="session")
+def config() -> TestConfig:
+    """Return test configuration."""
+    return TestConfig()
+
+@pytest.fixture(scope="session")
+def browser_type(config: TestConfig) -> BrowserType:
+    """Return the browser type based on configuration."""
+    return config.browser
+
+@pytest.fixture(scope="function")
+def browser(browser_type: BrowserType, config: TestConfig, request) -> Generator[WebDriver, None, None]:
+    """Initialize and yield a WebDriver instance with advanced configuration."""
+    driver = None
+
+    try:
+        if browser_type == BrowserType.CHROME:
+            options = ChromeOptions()
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--window-size=1920,1080')
+
+            if config.headless:
+                options.add_argument('--headless=new')
+                options.add_argument('--disable-gpu')
+
+            # Additional Chrome options
+            options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            options.add_argument('--ignore-certificate-errors')
+
+            # Initialize Chrome driver
+            driver = webdriver.Chrome(options=options)
+
+        elif browser_type == BrowserType.FIREFOX:
+            options = FirefoxOptions()
+            if config.headless:
+                options.add_argument('--headless')
+
+            options.set_preference('dom.webnotifications.enabled', False)
+            driver = webdriver.Firefox(options=options)
+
+        else:
+            raise ValueError(f"Unsupported browser: {browser_type}")
+
+        # Common driver settings
+        driver.implicitly_wait(config.timeout)
+        driver.maximize_window()
+
+        # Set up request finalizer for cleanup
+        def fin():
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e:
+                    logger.error(f"Error during driver teardown: {e}")
+
+        request.addfinalizer(fin)
+
+        yield driver
+
+    except Exception as e:
+        logger.error(f"Failed to initialize WebDriver: {e}")
+        raise
+
+@pytest.fixture(scope="function")
+def test_case(browser: WebDriver, config: TestConfig, request) -> 'BaseTest':
+    """Create a test case instance with the browser and configuration."""
+    test_case = BaseTest(browser, config)
+
+    # Add test metadata
+    test_case.test_name = request.node.name
+    test_case.start_time = datetime.utcnow()
+
+    # Set up failure handler
+    def fin():
+        test_case.end_time = datetime.utcnow()
+        test_case.duration = (test_case.end_time - test_case.start_time).total_seconds()
+
+        # Capture screenshot on failure
+        if hasattr(request.node, 'rep_call') and request.node.rep_call.failed:
+            screenshot_path = test_case.take_screenshot(f"failure_{request.node.name}.png")
+            allure.attach.file(
+                screenshot_path,
+                name="failure_screenshot",
+                attachment_type=allure.attachment_type.PNG
+            )
+
+            # Log test result
+            test_case.status = "failed"
+            test_case.error = str(request.node.rep_call.longrepr)
+        else:
+            test_case.status = "passed"
+
+        # Log test result to file
+        test_case.log_test_result()
+
+    request.addfinalizer(fin)
+    return test_case
+
+# --- Hooks ---
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Create test report for each test."""
+    # Execute all other hooks to obtain the report object
+    outcome = yield
+    rep = outcome.get_result()
+
+    # Set a report attribute for each phase of a call
+    setattr(item, f"rep_{rep.when}", rep)
+
+
+# --- Test Classes ---
+class Test{{ test_name|replace(' ', '') }}:
+    """
+    Test case: {{ test_name }}
+
+    {{ description }}
+
+    Features:
+    - Parameterized test cases
+    - Retry mechanism for flaky tests
+    - Comprehensive logging and reporting
+    - Performance monitoring
+    """
+
+    # Test configuration
+    TEST_DATA = {
+        'base_url': "{{ base_url or 'http://example.com' }}",
+        'username': 'testuser',
+        'password': 'securepassword',
+        'timeout': 30,
+        'retry_count': 3
+    }
+
+    # Test data for parameterization
+    @pytest.fixture(params=[
+        {"username": "user1@example.com", "password": "Pass123!"},
+        {"username": "user2@example.com", "password": "Pass456!"},
+    ])
+    def user_credentials(self, request):
+        """Provide different sets of user credentials for testing."""
+        return request.param
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, test_case, config):
+        """Setup and teardown for each test."""
+        self.test = test_case
+        self.config = config
+
+        # Additional setup code can go here
+        self.test.log_step("Test setup completed")
+
+        yield
+
+        # Teardown code
+        self.test.log_step("Test teardown completed")
+
+    # --- Test Cases ---
+    @pytest.mark.smoke
+    @pytest.mark.parametrize("browser_type", ["chrome", "firefox"], indirect=True)
+    def test_{{ test_name|lower|replace(' ', '_') }}(self, user_credentials):
+        """
+        {{ description }}
+
+        This test verifies the core functionality of the system.
+        """
+        # Log test start
+        self.test.log_step("Starting test execution", "info", **{"test_data": self.TEST_DATA})
+
+        try:
+            # Example test steps with retry
+            self._navigate_to_login_page()
+            self._login(user_credentials)
+            self._verify_dashboard()
+
+            # Performance measurement example
+            with allure.step("Measure critical user journey performance"):
+                self._measure_critical_journey()
+
+            # Log test completion
+            self.test.log_step("Test completed successfully", "pass")
+
+        except Exception as e:
+            # Handle test failure
+            error_msg = f"Test failed: {str(e)}"
+            self.test.log_step(error_msg, "fail", error=str(e))
+            self.test.take_screenshot("test_failure.png")
+            pytest.fail(error_msg)
+
+    # --- Helper Methods ---
+    def _navigate_to_login_page(self):
+        """Navigate to the login page."""
+        with allure.step("Navigate to login page"):
+            self.test.navigate_to("/login")
+            self.test.log_step("Navigated to login page")
+
+            # Verify page loaded
+            assert "Login" in self.test.browser.title, "Login page not loaded"
+
+    def _login(self, credentials):
+        """Perform login with provided credentials."""
+        with allure.step(f"Login as {credentials['username']}"):
+            # Find and interact with elements
+            username_field = self.test.wait_for_element(By.ID, "username")
+            password_field = self.test.wait_for_element(By.ID, "password")
+            login_button = self.test.wait_for_element(By.CSS_SELECTOR, "button[type='submit']")
+
+            # Enter credentials
+            username_field.clear()
+            username_field.send_keys(credentials['username'])
+
+            password_field.clear()
+            password_field.send_keys(credentials['password'])
+
+            # Click login
+            login_button.click()
+
+            self.test.log_step("Login form submitted")
+
+    def _verify_dashboard(self):
+        """Verify successful login by checking dashboard elements."""
+        with allure.step("Verify dashboard"):
+            # Wait for dashboard to load
+            self.test.wait_for_element(By.ID, "dashboard", timeout=10)
+
+            # Verify welcome message
+            welcome_msg = self.test.wait_for_element(By.CLASS_NAME, "welcome-message")
+            assert "Welcome" in welcome_msg.text, "Welcome message not found"
+
+            self.test.log_step("Dashboard verified successfully")
+
+    def _measure_critical_journey(self):
+        """Measure performance of critical user journey."""
+        # Example of measuring performance
+        def perform_actions():
+            # Simulate user actions
+            self.test.navigate_to("/products")
+            self.test.wait_for_element(By.CLASS_NAME, "product-list")
+
+            self.test.navigate_to("/cart")
+            self.test.wait_for_element(By.ID, "cart-items")
+
+            return True
+
+        # Measure performance
+        metrics = self.test.measure_performance(
+            "critical_journey",
+            perform_actions
+        )
+
+        # Log metrics
+        self.test.log_step(
+            "Performance metrics collected",
+            "info",
+            **{"performance_metrics": metrics}
+        )
+
+        # Add performance assertion (example)
+        assert metrics["critical_journey_time"] < 5.0, "Critical journey took too long"
+
+    # --- Data-Driven Testing ---
+    @pytest.mark.parametrize("product_id,expected_price", [
+        ("1001", "$19.99"),
+        ("1002", "$29.99"),
+        ("1003", "$39.99"),
+    ])
+    def test_product_pricing(self, product_id, expected_price):
+        """Verify product pricing is displayed correctly."""
+        self.test.navigate_to(f"/products/{product_id}")
+
+        # Wait for price element and verify
+        price_element = self.test.wait_for_element(
+            By.CSS_SELECTOR,
+            ".product-price",
+            timeout=10
+        )
+
+        assert price_element.text == expected_price, \
+            f"Expected price {expected_price} but found {price_element.text}"
+
+        self.test.log_step(
+            f"Verified price for product {product_id}",
+            "pass",
+            product_id=product_id,
+            expected_price=expected_price,
+            actual_price=price_element.text
+        )
+
+# Example of a performance test
+class Test{{ test_name|replace(' ', '') }}Performance:
+    """Performance tests for {{ test_name }}."""
+
+    @pytest.mark.performance
+    @pytest.mark.parametrize("concurrent_users", [1, 5, 10])
+    def test_concurrent_users_performance(self, test_case, concurrent_users):
+        """Test system performance with concurrent users."""
+        test_case.log_step(f"Testing with {concurrent_users} concurrent users")
+
+        # Simulate concurrent users
+        start_time = time.time()
+
+        # In a real test, you would use a tool like locust or jmeter
+        # This is a simplified example
+        response_times = []
+        for i in range(concurrent_users):
+            user_start = time.time()
+
+            # Simulate user actions
+            test_case.navigate_to("/")
+            test_case.wait_for_element(By.TAG_NAME, "body")
+
+            response_time = time.time() - user_start
+            response_times.append(response_time)
+
+            test_case.log_step(
+                f"User {i+1} response time: {response_time:.2f}s",
+                "info"
+            )
+
+        # Calculate metrics
+        total_time = time.time() - start_time
+        avg_response = sum(response_times) / len(response_times)
+
+        # Log results
+        metrics = {
+            "concurrent_users": concurrent_users,
+            "total_time": total_time,
+            "avg_response_time": avg_response,
+            "requests_per_second": concurrent_users / total_time if total_time > 0 else 0,
+            "response_times": response_times
+        }
+
+        test_case.log_step(
+            "Performance test completed",
+            "info",
+            **{"performance_metrics": metrics}
+        )
+
+        # Add performance assertions
+        assert avg_response < 2.0, f"Average response time {avg_response:.2f}s exceeds threshold"
+
+        # Attach detailed metrics to report
+        allure.attach(
+            json.dumps(metrics, indent=2),
+            name=f"performance_metrics_{concurrent_users}_users",
+            attachment_type=allure.attachment_type.JSON
+        )
+
+# Example of an API test class
+class Test{{ test_name|replace(' ', '') }}API:
+    """API tests for {{ test_name }}."""
+
+    @pytest.fixture
+    def api_client(self, config):
+        """Create an API client with authentication."""
+        base_url = config.api_url
+
+        class APIClient:
+            def __init__(self, base_url):
+                self.base_url = base_url
+                self.session = requests.Session()
+                self.session.headers.update({
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                })
+
+            def request(self, method, endpoint, **kwargs):
+                url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+                response = self.session.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
+
+            def get(self, endpoint, **kwargs):
+                return self.request("GET", endpoint, **kwargs)
+
+            def post(self, endpoint, **kwargs):
+                return self.request("POST", endpoint, **kwargs)
+
+            def put(self, endpoint, **kwargs):
+                return self.request("PUT", endpoint, **kwargs)
+
+            def delete(self, endpoint, **kwargs):
+                return self.request("DELETE", endpoint, **kwargs)
+
+        return APIClient(base_url)
+
+    @pytest.mark.api
+    def test_api_endpoint(self, api_client):
+        """Test a sample API endpoint."""
+        response = api_client.get("/api/health")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "ok"
+
+        # Log the response
+        allure.attach(
+            json.dumps(data, indent=2),
+            name="api_response",
+            attachment_type=allure.attachment_type.JSON
+        )

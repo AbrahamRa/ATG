@@ -1,0 +1,320 @@
+*** Settings ***
+Documentation    {{ description }}
+{% if parallel %}
+# Parallel execution settings
+Suite Setup       Suite Setup
+Suite Teardown    Suite Teardown
+Test Setup        Test Setup
+Test Teardown     Test Teardown
+Test Timeout      ${TIMEOUT}
+{% endif %}
+
+# Library imports
+{% if libraries %}
+{% for library in libraries %}
+Library    {{ library }}
+{% endfor %}
+{% else %}
+Library    SeleniumLibrary    timeout=${TIMEOUT}    implicit_wait=0    run_on_failure=Capture Page Screenshot
+Library    Collections
+Library    String
+Library    OperatingSystem
+Library    BuiltIn
+Library    DateTime
+{% if parallel %}
+Library    Process
+Library    Screenshot
+{% endif %}
+{% endif %}
+
+# Resource files
+{% if resources %}
+{% for resource in resources %}
+Resource    ${RESOURCES_DIR}/{{ resource }}
+{% endfor %}
+{% endif %}
+
+*** Variables ***
+# --- Environment Configuration ---
+${ENV}              ${ENV or 'staging'}
+${BROWSER}          ${BROWSER or 'chrome'}
+${PLATFORM}         ${PLATFORM or 'WINDOWS'}
+${HEADLESS}         ${HEADLESS or ${False}}
+
+# --- Application URLs ---
+&{ENV_URLS}         staging=http://staging.example.com    prod=http://example.com
+${URL}              ${ENV_URLS}[${ENV}]
+${LOGIN_URL}        ${URL}/login
+${API_URL}          ${URL}/api/v1
+
+# --- Browser Settings ---
+${BROWSER_OPTIONS}  add_argument('--no-sandbox'); add_argument('--disable-dev-shm-usage')
+...                 {% if HEADLESS %}add_argument('--headless'); add_argument('--disable-gpu');{% endif %}
+...                 add_argument('--window-size=1920,1080'); add_argument('--disable-notifications')
+
+# --- Test Data ---
+${TIMEOUT}          30s
+${LONG_TIMEOUT}     60s
+${RETRY_COUNT}      3
+${RETRY_INTERVAL}   2s
+
+# --- Element Locators ---
+# Common Elements
+${LOGIN_BUTTON}     id:login-button
+${USERNAME_FIELD}   id:username
+${PASSWORD_FIELD}   css:input[type='password']
+${ERROR_MESSAGE}    css:.error-message
+
+# --- Test Data ---
+&{TEST_USERS}       admin=admin@example.com    user=user@example.com    guest=guest@example.com
+${DEFAULT_PASSWORD}    P@ssw0rd123!
+
+# --- Parallel Execution ---
+${THREAD_COUNT}     ${4}    # Number of parallel threads
+${PROCESS_TIMEOUT}  10m     # Maximum time for parallel execution
+
+*** Test Cases ***
+{{ test_name }}
+    [Documentation]    {{ description }}
+    [Tags]    {{ test_name|lower|replace(' ', '_') }}    {{ tags|default('smoke') }}
+    [Setup]    Test Setup
+    [Teardown]    Test Teardown
+
+    # Test Data
+    ${test_data}=    Get Test Data    ${TEST_DATA_FILE}
+
+    # Test Steps with Retry
+    Run Keyword With Retry    ${RETRY_COUNT}    ${RETRY_INTERVAL}
+    ...    Execute Test Steps    ${test_data}
+
+*** Keywords ***
+# --- Test Execution ---
+Execute Test Steps
+    [Arguments]    ${test_data}
+    [Documentation]    Execute test steps with the provided test data
+
+    # Dynamic test step execution
+    {% for step in steps %}
+    # {{ step.action }}
+    # Expected: {{ step.expected_result }}
+    Run Keyword If    '{{ step.condition|default('True') }}' == 'True'
+    ...    Run Keyword And Continue On Failure    {{ step.keyword }}
+    {% if step.timeout %}
+    ...    timeout={{ step.timeout }}
+    {% endif %}
+
+    # Add screenshot on failure for critical steps
+    Run Keyword If Test Failed    Capture Page Screenshot    step_{{ loop.index }}_{{ step.action|lower|replace(' ', '_') }}.png
+
+    # Log step result
+    Log Step Result    {{ step.action }}    {{ step.expected_result }}
+
+    {% endfor %}
+
+    # Additional validations
+    Run Keyword If    '${TEST STATUS}' == 'PASS'    Post Execution Validation
+
+# --- Parallel Test Execution ---
+{% if parallel %}
+Suite Setup
+    [Documentation]    Setup for parallel test execution
+    Set Global Variable    ${SUITE_START_TIME}    ${time.epoch()}
+    Create Directory    ${OUTPUT_DIR}/screenshots
+
+    # Initialize thread-safe resources
+    ${lock}=    Evaluate    threading.Lock()    modules=threading
+    Set Global Variable    ${GLOBAL_LOCK}    ${lock}
+
+    # Start performance monitoring
+    Start Performance Monitor
+
+Suite Teardown
+    [Documentation]    Teardown after all tests complete
+    Stop Performance Monitor
+    Log    Total execution time: ${time.epoch() - ${SUITE_START_TIME}} seconds
+
+    # Generate test report
+    Generate Test Report    ${OUTPUT_DIR}/test_report.html
+
+Test Setup
+    [Documentation]    Setup before each test case
+    ${test_id}=    Generate Test Id    ${TEST NAME}
+    Set Test Variable    ${TEST_ID}    ${test_id}
+
+    # Initialize test-specific resources
+    Open Browser    ${URL}    ${BROWSER}    options=${BROWSER_OPTIONS}
+    Set Selenium Timeout    ${TIMEOUT}
+    Set Selenium Speed    0.1s
+
+    # Start test timer
+    ${start_time}=    Get Time    epoch
+    Set Test Variable    ${TEST_START_TIME}    ${start_time}
+
+Test Teardown
+    [Documentation]    Teardown after each test case
+    ${status}=    Run Keyword And Return Status    Test Should Not Have Failed
+    ${end_time}=    Get Time    epoch
+    ${duration}=    Evaluate    ${end_time} - ${TEST_START_TIME}
+
+    # Capture screenshot on failure
+    Run Keyword If    not ${status}    Capture Page Screenshot    ${TEST_ID}_failure.png
+
+    # Log test result
+    Log Test Result    ${TEST NAME}    ${status}    ${duration}
+
+    # Close browser and cleanup
+    Run Keyword And Ignore Error    Close All Browsers
+
+    # Release resources
+    Run Keyword And Ignore Error    Cleanup Test Resources
+{% endif %}
+
+# --- Advanced Keywords ---
+Run Keyword With Retry
+    [Arguments]    ${retry_count}    ${retry_interval}    ${keyword}    @{args}
+    [Documentation]    Execute a keyword with retry logic
+    ${status}    ${result}=    Run Keyword And Ignore Error    ${keyword}    @{args}
+    ${attempt}=    Set Variable    1
+
+    WHILE    '${status}' == 'FAIL' and ${attempt} < ${retry_count}
+        Log    Retry ${attempt}/${retry_count} for '${keyword}' failed: ${result}    level=WARN
+        Sleep    ${retry_interval}
+        ${status}    ${result}=    Run Keyword And Ignore Error    ${keyword}    @{args}
+        ${attempt}=    Evaluate    ${attempt} + 1
+    END
+
+    Run Keyword If    '${status}' == 'FAIL'    Fail    ${result}
+    [Return]    ${result}
+
+Get Test Data
+    [Arguments]    ${data_file}=${None}
+    [Documentation]    Load test data from file or generate dynamically
+    ${test_data}=    Create Dictionary
+
+    # Load from file if provided
+    IF    '${data_file}' != '${None}' and os.path.exists('${data_file}')
+        ${test_data}=    Load Test Data From File    ${data_file}
+    ELSE
+        # Generate dynamic test data
+        ${test_data}=    Generate Test Data
+    END
+
+    [Return]    ${test_data}
+
+Generate Test Data
+    [Documentation]    Generate dynamic test data
+    ${random_string}=    Generate Random String    8    [LETTERS][NUMBERS]
+    ${test_data}=    Create Dictionary
+    ...    username=user_${random_string}@example.com
+    ...    password=${DEFAULT_PASSWORD}
+    ...    test_id=${random_string}
+
+    [Return]    ${test_data}
+
+# --- Performance Monitoring ---
+Start Performance Monitor
+    [Documentation]    Start monitoring system and application performance
+    # Implementation depends on available tools and requirements
+    Log    Performance monitoring started
+
+Stop Performance Monitor
+    [Documentation]    Stop performance monitoring and generate report
+    # Implementation depends on available tools and requirements
+    Log    Performance monitoring stopped
+
+# --- Reporting ---
+Log Step Result
+    [Arguments]    ${step}    ${expected_result}
+    [Documentation]    Log step result with timestamp
+    ${timestamp}=    Get Time    epoch
+    ${status}=    Run Keyword And Return Status    Should Be True    '${TEST STATUS}' == 'PASS'
+
+    Log    \nStep: ${step}\nExpected: ${expected_result}\nStatus: ${status}    console=True
+
+    # Add to test report
+    ${step_result}=    Create Dictionary
+    ...    step=${step}
+    ...    expected=${expected_result}
+    ...    status=${status}
+    ...    timestamp=${timestamp}
+
+    ${step_results}=    Get Variable Value    ${STEP_RESULTS}    ${[]}
+    Append To List    ${step_results}    ${step_result}
+    Set Test Variable    ${STEP_RESULTS}    ${step_results}
+
+Generate Test Report
+    [Arguments]    ${output_file}
+    [Documentation]    Generate HTML test report
+    # Implementation for generating HTML report
+    Log    Generating test report: ${output_file}    console=True
+
+# --- Utility Keywords ---
+Cleanup Test Resources
+    [Documentation]    Clean up any resources created during test execution
+    # Implementation for cleaning up resources
+    Log    Cleaning up test resources
+
+Generate Test Id
+    [Arguments]    ${test_name}
+    [Documentation]    Generate a unique test ID
+    ${timestamp}=    Get Time    epoch
+    ${random}=    Generate Random String    4    [NUMBERS]
+    ${test_id}=    Catenate    SEPARATOR=_    ${test_name}    ${timestamp}    ${random}
+    ${test_id}=    Evaluate    "${test_id}".lower().replace(' ', '_')
+    [Return]    ${test_id}
+
+*** Keywords ***
+# --- Setup & Teardown ---
+{{ test_name }} Suite Setup
+    [Documentation]    Suite setup for {{ test_name }}
+    Log    Setting up test suite for {{ test_name }}
+    # Add suite-level setup here
+
+{{ test_name }} Suite Teardown
+    [Documentation]    Suite teardown for {{ test_name }}
+    # Add suite-level teardown here
+    Log    Tearing down test suite for {{ test_name }}
+
+{{ test_name }} Test Setup
+    [Documentation]    Test setup for {{ test_name }}
+    Log    Starting test case: {{ test_name }}
+    # Add test-level setup here
+
+{{ test_name }} Test Teardown
+    [Documentation]    Test teardown for {{ test_name }}
+    # Add test-level teardown here
+    Log    Completed test case: {{ test_name }}
+
+# --- Custom Keywords ---
+Login With Credentials
+    [Documentation]    Log in with the given credentials
+    [Arguments]    ${username}    ${password}
+    Go To    ${LOGIN_URL}
+    Input Text    ${USERNAME_FIELD}    ${username}
+    Input Password    ${PASSWORD_FIELD}    ${password}
+    Click Button    ${LOGIN_BUTTON}
+
+Wait Until Page Contains Element With Retry
+    [Documentation]    Wait for an element with retry logic
+    [Arguments]    ${locator}    ${timeout}=${TIMEOUT}    ${retry}=3
+    FOR    ${i}    IN RANGE    ${retry}
+        ${status}    Run Keyword And Return Status    Wait Until Page Contains Element    ${locator}    ${timeout}
+        Exit For Loop If    ${status} == ${True}
+        Log    Retry ${i+1} for element ${locator} failed    level=WARN
+    END
+    Run Keyword If    '${status}' == 'False'    Fail    Element ${locator} not found after ${retry} retries
+
+# --- Helper Keywords ---
+Generate Random String
+    [Documentation]    Generate a random string of given length
+    [Arguments]    ${length}=8
+    ${random_string}    Generate Random String    ${length}
+    [Return]    ${random_string}
+
+# --- Page Object Keywords ---
+# Add page object keywords here for better maintainability
+# Example:
+# Login Page Should Be Open
+#     [Documentation]    Verify login page is open
+#     Title Should Be    Login Page
+#     Page Should Contain Element    ${LOGIN_BUTTON}
