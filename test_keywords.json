@@ -1,0 +1,10 @@
+{
+  "click button": {
+    "keyword": "Click Button",
+    "confidence": 1.0
+  },
+  "type text": {
+    "keyword": "Click Button",
+    "confidence": 0.8
+  }
+}
