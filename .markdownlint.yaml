@@ -1,0 +1,47 @@
+# Default state for all rules
+default: true
+
+# MD013/line-length: Line length
+MD013:
+  line_length: 100  # Default line length
+  code_blocks: false  # Don't check line length in code blocks
+  tables: false  # Don't check line length in tables
+
+# MD033/no-inline-html: Inline HTML
+MD033:
+  allowed_elements:
+    - details
+    - summary
+    - div
+    - span
+    - table
+    - thead
+    - tbody
+    - tr
+    - th
+    - td
+  allowed_attributes:
+    - target
+    - rel
+    - class
+    - id
+    - name
+    - aria-*
+    - data-*
+
+# MD041/first-line-heading/first-line-h1: First line in file should be a top level heading
+MD041: false
+
+# MD047/single-trailing-newline: Files should end with a single newline character
+MD047: false
+
+# MD024/no-duplicate-heading: Multiple headings with the same content
+MD024:
+  siblings_only: true
+
+# MD034/no-bare-urls: Bare URL used
+MD034: false
+
+# MD026/no-trailing-punctuation: Trailing punctuation in heading
+MD026:
+  punctuation: ".,;:!。，；：！"

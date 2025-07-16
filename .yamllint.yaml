@@ -1,0 +1,107 @@
+# YAML Lint configuration
+# See https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  # Line length
+  line-length:
+    max: 120
+    level: warning
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Indentation
+  indentation:
+    level: error
+    spaces: 2
+    indent-sequences: consistent
+    check-multi-line-strings: false
+
+  # Trailing spaces
+  trailing-spaces:
+    level: error
+
+  # Empty lines
+  empty-lines:
+    max: 2
+    max-start: 1
+    max-end: 1
+
+  # Comments
+  comments:
+    level: warning
+    require-starting-space: true
+    min-spaces-from-content: 2
+
+  # Document start
+  document-start:
+    present: false
+
+  # Document end
+  document-end:
+    present: true
+
+  # Braces
+  braces:
+    level: error
+    max-spaces-inside: 1
+    min-spaces-inside: 0
+    max-spaces-inside-empty: -1
+    min-spaces-inside-empty: -1
+
+  # Brackets
+  brackets:
+    level: error
+    max-spaces-inside: 1
+    min-spaces-inside: 0
+    max-spaces-inside-empty: -1
+    min-spaces-inside-empty: -1
+
+  # Commas
+  commas:
+    level: error
+    max-spaces-after: 1
+    min-spaces-after: 0
+    max-spaces-before: 0
+
+  # Colons
+  colons:
+    level: error
+    max-spaces-before: 0
+    max-spaces-after: 1
+
+  # Hyphens
+  hyphens:
+    level: error
+    max-spaces-after: 1
+
+  # Key duplication
+  key-duplicates:
+    level: error
+
+  # New line at end of file
+  new-line-at-end-of-file:
+    level: error
+
+  # New lines
+  new-lines:
+    type: unix
+
+  # Truthy
+  truthy:
+    level: error
+    allowed-values: ['true', 'false', 'True', 'False', 'on', 'off', 'yes', 'no']
+    check-keys: false
+
+  # Empty values
+  empty-values:
+    level: error
+    forbid-in-block-mappings: true
+    forbid-in-flow-mappings: true
+
+  # Quoted strings
+  quoted-strings:
+    level: warning
+    extra-allowed: ['^http://', '^https://', '^ftp://', '^s3://', 'gs://']
+    required: only-when-needed
