@@ -61,26 +61,34 @@ jobs:
         # Add any required environment variables here
         # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
+        # Ensure the test-results directory exists and is empty
+        rm -rf test-results
+        mkdir -p test-results
+
+        # Run pytest with coverage and junit output
         python -m pytest \
           --cov=src \
-          --cov-report=xml \
-          --junitxml=test-results/${{ matrix.os }}-${{ matrix.python-version }}.xml \
+          --cov-report=xml:coverage.xml \
+          --junitxml=test-results/junit.xml \
           -v \
           --cov-report=term
 
     - name: Upload coverage to Codecov
+      if: always()
       uses: codecov/codecov-action@v3
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        file: ./coverage.xml
+        file: coverage.xml
         fail_ci_if_error: false
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
-        path: test-results/
+        name: test-results-py${{ matrix.python-version }}
+        path: |
+          test-results/*.xml
+          coverage.xml
         retention-days: 7
 
   # Add additional jobs for other checks if needed
