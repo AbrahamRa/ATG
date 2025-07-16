@@ -17,17 +17,16 @@ jobs:
         python-version: ['3.8', '3.9', '3.10', '3.11']
         os: [ubuntu-latest]
 
-    services:
-      # Add any required services (e.g., databases) here
-      # redis:
-      #   image: redis
-      #   ports:
-      #     - 6379:6379
-      #   options: >-
-      #     --health-cmd "redis-cli ping"
-      #     --health-interval 10s
-      #     --health-timeout 5s
-      #     --health-retries 5
+    # services: Uncomment and configure services as needed
+    #   redis:
+    #     image: redis
+    #     ports:
+    #       - 6379:6379
+    #     options: >-
+    #       --health-cmd "redis-cli ping"
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
 
     steps:
     - uses: actions/checkout@v3
