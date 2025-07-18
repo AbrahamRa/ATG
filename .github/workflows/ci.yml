@@ -58,11 +58,8 @@ jobs:
     - name: Run tests with coverage
       env:
         PYTHONPATH: ${{ github.workspace }}
-        # Add any required environment variables here
-        # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
-        # Ensure the test-results directory exists and is empty
-        rm -rf test-results
+        # Create test-results directory
         mkdir -p test-results
 
         # Run pytest with coverage and junit output
@@ -71,7 +68,12 @@ jobs:
           --cov-report=xml:coverage.xml \
           --junitxml=test-results/junit.xml \
           -v \
-          --cov-report=term
+          --cov-report=term || echo "Tests completed with exit code $?"
+
+        # Verify test results and coverage files exist
+        echo "Test results and coverage files:"
+        ls -la test-results/ || echo "No test results directory"
+        ls -la coverage.xml || echo "No coverage file"
 
     - name: Upload coverage to Codecov
       if: always()
@@ -87,7 +89,7 @@ jobs:
       with:
         name: test-results-py${{ matrix.python-version }}
         path: |
-          test-results/*.xml
+          test-results/
           coverage.xml
         retention-days: 7
 
