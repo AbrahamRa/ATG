@@ -1,14 +1,11 @@
 """Tests for the main module."""
-import argparse
 import logging
-import sys
 from pathlib import Path
-from typing import List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from atg.main import parse_args, setup_logging, main
+from atg.main import main, parse_args, setup_logging
 
 
 def test_parse_args():
@@ -50,23 +47,48 @@ class TestMain:
 
     @patch("atg.main.parse_args")
     @patch("atg.main.setup_logging")
-    @patch("pathlib.Path.mkdir")
-    @patch("pathlib.Path.exists", return_value=True)
+    @patch("atg.main.TestGenerator")
+    @patch("atg.main.process_file")
     def test_main_success(
         self,
-        mock_exists,
-        mock_mkdir,
+        mock_process_file,
+        mock_test_generator,
         mock_setup_logging,
         mock_parse_args,
         caplog,
     ):
         """Test successful execution of main."""
-        # Setup mocks
+        # Create a mock for the source path
+        mock_source = MagicMock(spec=Path)
+        mock_source.is_file.return_value = True
+        mock_source.is_dir.return_value = False
+        mock_source.__str__.return_value = "source.py"
+
+        # Create a mock for the output path
+        mock_output = MagicMock(spec=Path)
+        mock_output.__str__.return_value = "tests"
+
+        # Setup mock args
         mock_args = MagicMock()
-        mock_args.source = Path("source.py")
-        mock_args.output = Path("tests")
+        mock_args.source = mock_source
+        mock_args.output = mock_output
         mock_args.verbose = 0
+        mock_args.quiet = False
+        mock_args.model = "gpt-4"
+        mock_args.temperature = 0.7
+        mock_args.framework = "pytest"
         mock_parse_args.return_value = mock_args
+
+        # Mock TestGenerator instance
+        mock_generator_instance = MagicMock()
+        mock_test_generator.return_value = mock_generator_instance
+
+        # Mock process_file result
+        mock_process_file.return_value = {
+            "status": "success",
+            "file": "source.py",
+            "output": "tests/test_source.py",
+        }
 
         # Run main
         with caplog.at_level(logging.INFO):
@@ -75,7 +97,14 @@ class TestMain:
         # Verify results
         assert result == 0
         mock_setup_logging.assert_called_once_with(0)
-        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        mock_source.mkdir.assert_not_called()  # Should not create source dir
+        mock_test_generator.assert_called_once_with(
+            model_name=mock_args.model, temperature=mock_args.temperature
+        )
+        mock_generator_instance.initialize.assert_called_once()
+        mock_process_file.assert_called_once_with(
+            mock_source, mock_output, mock_generator_instance, mock_args.framework
+        )
 
     @patch("atg.main.parse_args")
     def test_main_source_not_found(self, mock_parse_args, caplog):
